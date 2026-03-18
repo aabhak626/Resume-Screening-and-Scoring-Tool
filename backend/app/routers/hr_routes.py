@@ -1,35 +1,52 @@
-import os
 from fastapi import APIRouter, UploadFile, File, HTTPException
+import os
+
 from app.database import SessionLocal
 from app.models import JobDescription
+from app.services.resume_parser import get_resume_text
+from app.services.jd_parser import extract_min_cgpa, extract_skills
 
 router = APIRouter(prefix="/hr", tags=["HR"])
 
 UPLOAD_FOLDER = "uploads"
 
 @router.post("/upload-jd")
-def upload_jd(file: UploadFile = File(...)):
-
-    allowed_extensions = ["pdf", "doc", "docx"]
-    file_extension = file.filename.split(".")[-1].lower()
-
-    if file_extension not in allowed_extensions:
-        raise HTTPException(status_code=400, detail="Only PDF and Word files allowed")
-
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(file.file.read())
-
+async def upload_jd(file: UploadFile = File(...)):
     db = SessionLocal()
 
-    new_jd = JobDescription(
-        title=file.filename,
-        description=file_path
-    )
+    try:
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
 
-    db.add(new_jd)
-    db.commit()
-    db.close()
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
-    return {"message": "Job Description uploaded successfully"}
+        text = get_resume_text(file_path)
+
+        if not text:
+            raise HTTPException(status_code=400, detail="JD text extraction failed")
+
+        min_cgpa = extract_min_cgpa(text)
+        skills = extract_skills(text)
+
+        jd = JobDescription(
+            file_path=file_path,
+            min_cgpa=min_cgpa,
+            required_skills=",".join(skills)
+        )
+
+        db.add(jd)
+        db.commit()
+        db.refresh(jd)
+
+        return {
+            "jd_id": jd.id,
+            "min_cgpa": min_cgpa,
+            "required_skills": skills
+        }
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="JD upload failed")
+
+    finally:
+        db.close()

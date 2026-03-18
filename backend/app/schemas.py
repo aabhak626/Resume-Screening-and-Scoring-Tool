@@ -14,3 +14,12 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+class ResumeResponse(BaseModel):
+    
+    id: int
+    filename: str
+    skills: str
+
+    class Config:
+        from_attributes = True        
