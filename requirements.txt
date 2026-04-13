@@ -2,5 +2,11 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
+python-multipart
+sentence-transformers
+scikit-learn
+numpy
+torch
+transformers
+spacy
 pydantic
-multipart

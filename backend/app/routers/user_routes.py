@@ -1,62 +1,47 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
-import os
-
+from fastapi import APIRouter, UploadFile, File
 from app.database import SessionLocal
-from app.models import Resume, JobDescription
-from app.services.resume_parser import get_resume_text
-from app.services.filter import check_eligibility
+from app.models import Resume
+from app.services.resume_parser import extract_cgpa
+from app.services.text_extractor import extract_text_from_file
+import os
 
 router = APIRouter(prefix="/user", tags=["User"])
 
 UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+MAX_FILE_SIZE = 2 * 1024 * 1024
+
 
 @router.post("/upload-resume")
-async def upload_resume(jd_id: int, file: UploadFile = File(...)):
+async def upload_resume(file: UploadFile = File(...)):
     db = SessionLocal()
 
-    try:
-        jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
+    content = await file.read()
 
-        if not jd:
-            raise HTTPException(status_code=400, detail="Invalid jd_id")
+    if len(content) > MAX_FILE_SIZE:
+        return {"error": "File too large"}
 
-        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
 
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
+    with open(file_path, "wb") as f:
+        f.write(content)
 
-        text = get_resume_text(file_path)
+    text = extract_text_from_file(file_path)
 
-        if not text:
-            raise HTTPException(status_code=400, detail="Resume text extraction failed")
+    if not text:
+        return {"error": "Could not extract text from resume"}
 
-        jd_data = {
-            "min_cgpa": jd.min_cgpa,
-            "required_skills": jd.required_skills.split(",") if jd.required_skills else []
-        }
+    cgpa = extract_cgpa(text)
 
-        result = check_eligibility(text, jd_data)
+    resume = Resume(
+        file_path=file_path,
+        extracted_text=text,
+        cgpa=cgpa
+    )
 
-        resume = Resume(
-            file_path=file_path,
-            extracted_text=text,
-            cgpa=result["cgpa"],
-            matched_skills=",".join(result["matched_skills"]),
-            eligible=result["eligible"],
-            jd_id=jd_id
-        )
+    db.add(resume)
+    db.commit()
+    db.close()
 
-        db.add(resume)
-        db.commit()
-
-        return result
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail="Internal Server Error")
-
-    finally:
-        db.close()
+    return {"message": "Resume uploaded"}

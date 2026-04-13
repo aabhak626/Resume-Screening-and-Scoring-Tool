@@ -1,21 +1,33 @@
-import PyPDF2
+import logging
+import re
+from typing import Optional
 
-def get_resume_text(file_path):
-    text = ""
+logger = logging.getLogger(__name__)
 
+
+def extract_cgpa(text: str) -> Optional[float]:
     try:
-        with open(file_path, "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            print(f"Pages: {len(reader.pages)}")
+        if not text:
+            logger.warning("CGPA extraction skipped because resume text is empty.")
+            return None
 
-            for i, page in enumerate(reader.pages):
-                page_text = page.extract_text()
-                print(f"Page {i} text: {page_text}")
+        patterns = [
+            r"\b(?:cgpa|gpa|score)\s*[:\-]?\s*(\d{1,2}(?:\.\d{1,2})?)(?:\s*/\s*10)?\b",
+            r"\b(\d{1,2}(?:\.\d{1,2})?)\s*/\s*10\b",
+        ]
 
-                if page_text:
-                    text += page_text
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
 
-    except Exception as e:
-        print("Extraction error:", e)
+            cgpa = float(match.group(1))
+            if 0 <= cgpa <= 10:
+                logger.info("Extracted CGPA %.2f from resume text.", cgpa)
+                return cgpa
 
-    return text
+        logger.info("No valid CGPA found in resume text.")
+        return None
+    except Exception:
+        logger.exception("Failed to extract CGPA from resume text.")
+        return None

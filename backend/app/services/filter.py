@@ -1,50 +1,44 @@
-import re
+import logging
+from typing import Iterable, List, Optional, Tuple
 
-def extract_cgpa(text):
-    matches = re.findall(r'(\d+\.\d+)', text)
-
-    if matches:
-        return max([float(m) for m in matches])
-
-    return None
+logger = logging.getLogger(__name__)
 
 
-def match_skills(text, required_skills):
-    text = text.lower()
-    matched = []
+def check_cgpa(cgpa: Optional[float], min_cgpa: Optional[float]) -> bool:
+    if min_cgpa in (None, 0):
+        logger.info("CGPA check skipped because job description has no minimum CGPA.")
+        return True
 
-    for skill in required_skills:
-        if skill.lower() in text:
-            matched.append(skill)
+    if cgpa is None:
+        logger.info("CGPA check failed because candidate CGPA is missing.")
+        return False
 
-    return matched
+    passed = cgpa >= min_cgpa
+    logger.info("CGPA check completed. candidate=%s minimum=%s passed=%s", cgpa, min_cgpa, passed)
+    return passed
 
 
-def check_eligibility(text, jd_data):
-    cgpa = extract_cgpa(text)
-    matched_skills = match_skills(text, jd_data["required_skills"])
+def check_skills(resume_skills: Iterable[str], jd_skills: Iterable[str]) -> Tuple[List[str], List[str]]:
+    normalized_resume_skills = [skill.strip().lower() for skill in resume_skills if skill and skill.strip()]
+    normalized_jd_skills = [skill.strip().lower() for skill in jd_skills if skill and skill.strip()]
 
-    reasons = []
-    eligible = True
+    if not normalized_jd_skills:
+        logger.info("Skill check skipped because no job skills were identified.")
+        return [], []
 
-    # CGPA check
-    if jd_data["min_cgpa"] is not None:
-        if cgpa is None or cgpa < jd_data["min_cgpa"]:
-            eligible = False
-            reasons.append("CGPA below requirement")
+    matched_skills: List[str] = []
+    missing_skills: List[str] = []
 
-    # Skill matching (50% rule)
-    required = len(jd_data["required_skills"])
-    matched = len(matched_skills)
+    for jd_skill in normalized_jd_skills:
+        is_matched = any(jd_skill in resume_skill or resume_skill in jd_skill for resume_skill in normalized_resume_skills)
+        if is_matched:
+            matched_skills.append(jd_skill)
+        else:
+            missing_skills.append(jd_skill)
 
-    if required > 0:
-        if matched / required < 0.5:
-            eligible = False
-            reasons.append("Insufficient skill match")
-
-    return {
-        "eligible": eligible,
-        "cgpa": cgpa,
-        "matched_skills": matched_skills,
-        "reasons": reasons
-    }
+    logger.info(
+        "Skill check completed. matched=%s missing=%s",
+        len(matched_skills),
+        len(missing_skills),
+    )
+    return matched_skills, missing_skills

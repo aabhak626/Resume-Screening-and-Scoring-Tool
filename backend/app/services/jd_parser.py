@@ -1,13 +1,36 @@
 import re
 
-def extract_min_cgpa(text):
+
+def extract_requirements_section(text: str):
+    if not text:
+        return ""
+
     text = text.lower()
 
     patterns = [
-        r'cgpa\s*(?:>=|>|at least)?\s*(\d+\.?\d*)',
-        r'(\d+\.?\d*)\s*cgpa',
-        r'minimum\s*(\d+\.?\d*)',
-        r'at least\s*(\d+\.?\d*)'
+        r"requirements(.*?)(responsibilities|preferred|benefits|$)",
+        r"qualifications(.*?)(responsibilities|$)",
+        r"skills(.*?)(responsibilities|$)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1)
+
+    return text
+
+
+def extract_min_cgpa(text: str):
+    if not text:
+        return 0.0
+
+    text = text.lower()
+
+    patterns = [
+        r'cgpa\s*[:\-]?\s*(\d\.\d+)',
+        r'minimum cgpa\s*[:\-]?\s*(\d\.\d+)',
+        r'(\d\.\d+)\s*cgpa'
     ]
 
     for pattern in patterns:
@@ -15,26 +38,4 @@ def extract_min_cgpa(text):
         if match:
             return float(match.group(1))
 
-    return None
-
-
-def extract_skills(text):
-    skills_db = [
-        "python", "java", "c++", "sql",
-        "machine learning", "deep learning",
-        "data analysis", "nlp", "pandas", "numpy"
-    ]
-
-    text = text.lower()
-
-    # Try extracting from skills section
-    if "skills" in text:
-        text = text.split("skills")[-1][:300]
-
-    found = []
-
-    for skill in skills_db:
-        if skill in text:
-            found.append(skill)
-
-    return list(set(found))
+    return 0.0

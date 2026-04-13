@@ -5,20 +5,24 @@ class JobDescription(Base):
     __tablename__ = "job_descriptions"
 
     id = Column(Integer, primary_key=True, index=True)
-    file_path = Column(String, nullable=False)
+    file_path = Column(String)
     min_cgpa = Column(Float)
-    required_skills = Column(Text)
+    text = Column(Text)
 
+    from sqlalchemy import Column, Text
+
+    jd_skills = Column(Text)   # store JSON string
 
 class Resume(Base):
     __tablename__ = "resumes"
 
     id = Column(Integer, primary_key=True, index=True)
-    file_path = Column(String, nullable=False)
+    file_path = Column(String)
     extracted_text = Column(Text)
 
     cgpa = Column(Float)
     matched_skills = Column(Text)
-    eligible = Column(Boolean)
+    score = Column(Float)
 
+    eligible = Column(Boolean)
     jd_id = Column(Integer)

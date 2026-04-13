@@ -1,35 +1,51 @@
-import spacy
-from spacy.matcher import PhraseMatcher
+import logging
+import re
+from typing import List
 
-nlp = spacy.load("en_core_web_sm")
+COMMON_WORDS = [
+    "experience", "knowledge", "ability", "understanding",
+    "good", "strong", "working", "familiar"
+]
+
+SKILL_NORMALIZATION = {
+    "ml": "machine learning",
+    "ai": "artificial intelligence",
+    "dl": "deep learning",
+}
+
+logger = logging.getLogger(__name__)
 
 
-# Extract skills dynamically from JD
-def extract_skills_dynamic(text):
-    doc = nlp(text.lower())
+def extract_dynamic_skills(text: str) -> List[str]:
+    try:
+        if not text:
+            logger.warning("Skill extraction skipped because input text is empty.")
+            return []
 
-    skills = set()
+        lines = text.lower().split("\n")
+        skills: List[str] = []
+        seen = set()
 
-    for chunk in doc.noun_chunks:
-        if len(chunk.text.split()) <= 3:
-            skills.add(chunk.text.strip())
+        for line in lines:
+            if len(line) >= 100:
+                continue
 
-    return list(skills)
+            words = re.findall(r"\b[a-zA-Z]+\b", line)
+
+            for word in words:
+                normalized_word = SKILL_NORMALIZATION.get(word.strip(), word.strip())
+                if normalized_word in COMMON_WORDS or len(normalized_word) <= 2:
+                    continue
+                if normalized_word not in seen:
+                    seen.add(normalized_word)
+                    skills.append(normalized_word)
+
+        logger.info("Extracted %s unique skills.", len(skills))
+        return skills
+    except Exception:
+        logger.exception("Failed to extract skills from text.")
+        return []
 
 
-# Extract only JD-relevant skills from resume
-def extract_relevant_skills(text, jd_skills):
-    doc = nlp(text.lower())
-
-    matcher = PhraseMatcher(nlp.vocab)
-    patterns = [nlp(skill) for skill in jd_skills]
-    matcher.add("JD_SKILLS", patterns)
-
-    matches = matcher(doc)
-
-    found = set()
-
-    for _, start, end in matches:
-        found.add(doc[start:end].text)
-
-    return list(found)
+def extract_skills(text: str) -> List[str]:
+    return extract_dynamic_skills(text)
