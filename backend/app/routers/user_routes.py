@@ -1,6 +1,8 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Resume
+from app.routers.auth_routes import get_current_user
 from app.services.resume_parser import extract_cgpa
 from app.services.text_extractor import extract_text_from_file
 import os
@@ -13,35 +15,62 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 MAX_FILE_SIZE = 2 * 1024 * 1024
 
 
-@router.post("/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
+def get_db():
     db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-    content = await file.read()
 
-    if len(content) > MAX_FILE_SIZE:
-        return {"error": "File too large"}
+@router.post("/upload-resume")
+async def upload_resume(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        content = await file.read()
 
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail="File too large (max 2MB)"
+            )
 
-    with open(file_path, "wb") as f:
-        f.write(content)
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
 
-    text = extract_text_from_file(file_path)
+        with open(file_path, "wb") as f:
+            f.write(content)
 
-    if not text:
-        return {"error": "Could not extract text from resume"}
+        text = extract_text_from_file(file_path)
 
-    cgpa = extract_cgpa(text)
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract text from resume"
+            )
 
-    resume = Resume(
-        file_path=file_path,
-        extracted_text=text,
-        cgpa=cgpa
-    )
+        cgpa = extract_cgpa(text)
 
-    db.add(resume)
-    db.commit()
-    db.close()
+        resume = Resume(
+            file_path=file_path,
+            extracted_text=text,
+            cgpa=cgpa,
+            # Optional (recommended if model supports it)
+            # user_id=current_user.id
+        )
 
-    return {"message": "Resume uploaded"}
+        db.add(resume)
+        db.commit()
+
+        return {
+            "message": "Resume uploaded successfully",
+            "uploaded_by": current_user.email
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

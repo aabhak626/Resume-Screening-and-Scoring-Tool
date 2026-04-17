@@ -1,19 +1,23 @@
-import logging
-import os
-from pathlib import Path
-
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import JobDescription, Resume
+from app.routers.auth_routes import require_admin
 
-from app.services.jd_parser import extract_requirements_section, extract_min_cgpa
+from app.services.jd_parser import extract_min_cgpa
 from app.services.embedding import clean_text, compute_similarity
 from app.services.filter_engine import apply_filters
 from app.services.similarity import calculate_final_score, explain_score
 from app.services.text_extractor import extract_text_from_file
 
+import logging
+import os
+import json
+from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
+# MUST BE BEFORE ROUTES
 router = APIRouter(prefix="/hr", tags=["HR"])
 
 UPLOAD_FOLDER = "uploads"
@@ -21,20 +25,28 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 MAX_FILE_SIZE = 2 * 1024 * 1024
 
+# DB Dependency
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# JD Upload (Improved)
+# Upload JD
 
 @router.post("/upload-jd")
-async def upload_jd(file: UploadFile = File(...)):
-    db = SessionLocal()
-
+async def upload_jd(
+    file: UploadFile = File(...),
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     try:
         content = await file.read()
 
         if len(content) > MAX_FILE_SIZE:
-            logger.warning("JD upload failed: file too large")
-            return {"error": "JD file too large"}
+            raise HTTPException(status_code=400, detail="JD file too large")
 
         file_path = os.path.join(UPLOAD_FOLDER, file.filename)
 
@@ -44,148 +56,156 @@ async def upload_jd(file: UploadFile = File(...)):
         text = extract_text_from_file(file_path)
 
         if not text:
-            logger.error("JD text extraction failed")
-            return {"error": "Could not extract JD text"}
+            raise HTTPException(status_code=400, detail="Could not extract JD text")
 
-        requirements = extract_requirements_section(text) or ""
         min_cgpa = extract_min_cgpa(text)
-
-        # Store the full JD text so similarity compares full-document context
-        # instead of a short requirements-only slice.
-        jd_text_for_storage = text
-
-        if len(clean_text(requirements).split()) < 20:
-            logger.info("Requirements section too short; keeping full JD text for similarity.")
-
-        logger.info("JD parsed | min_cgpa=%s", min_cgpa)
 
         jd = JobDescription(
             file_path=file_path,
-            text=jd_text_for_storage,
+            text=text,
             min_cgpa=min_cgpa
         )
 
         db.add(jd)
         db.commit()
+        db.refresh(jd)
 
         return {
-            "message": "JD uploaded",
-            "min_cgpa": min_cgpa,
+            "message": "JD uploaded successfully",
+            "jd_id": jd.id,
+            "min_cgpa": min_cgpa
         }
 
     except Exception as e:
         logger.exception("Error uploading JD")
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-    finally:
-        db.close()
+# Get All JDs
 
+@router.get("/jds")
+def list_jds(
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    try:
+        jds = db.query(JobDescription).all()
+
+        return [
+            {
+                "id": jd.id,
+                "file_path": Path(jd.file_path).name if jd.file_path else f"JD {jd.id}"
+            }
+            for jd in jds
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Screening 
 
-@router.get("/screen")
-def screen():
-    db = SessionLocal()
-
+@router.get("/screen/{jd_id}")
+def screen(
+    jd_id: int,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     try:
-        jd = db.query(JobDescription).first()
+        from app.services.skill_extractor import extract_skills
+
+        jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
         resumes = db.query(Resume).all()
 
         if not jd:
-            logger.warning("Screening attempted without JD")
-            return {"error": "No JD uploaded"}
+            raise HTTPException(status_code=404, detail="Job description not found")
 
         if not resumes:
-            logger.warning("No resumes found for screening")
-            return {"error": "No resumes uploaded"}
+            raise HTTPException(status_code=400, detail="No resumes uploaded")
 
         results = []
 
-        for resume in resumes:
-            logger.info("Screening resume_id=%s", resume.id)
+        # Extract JD skills once
+        jd_text = jd.text or ""
+        jd_skills = extract_skills(jd_text)
 
+        for resume in resumes:
             try:
-                jd_text = jd.text or ""
                 resume_text = resume.extracted_text or ""
 
-                # Old rows may still contain only a short requirements snippet.
-                # Re-extract the full JD text if the stored content is too small.
-                if len(clean_text(jd_text).split()) < 20 and jd.file_path:
-                    logger.info(
-                        "Stored JD text is too short for resume_id=%s; falling back to full JD file text.",
-                        resume.id,
-                    )
-                    jd_text = extract_text_from_file(jd.file_path) or jd_text
+                cleaned_jd = clean_text(jd_text)
+                cleaned_resume = clean_text(resume_text)
 
-                cleaned_jd_text = clean_text(jd_text)
-                cleaned_resume_text = clean_text(resume_text)
-
-                logger.info(
-                    "Screening text debug for resume_id=%s | jd_words=%s | resume_words=%s | jd_preview=%r | resume_preview=%r",
-                    resume.id,
-                    len(cleaned_jd_text.split()),
-                    len(cleaned_resume_text.split()),
-                    cleaned_jd_text[:200],
-                    cleaned_resume_text[:200],
-                )
-
-                # Filtering 
-               
+                # Apply filters
                 _, matched_skills, reasons = apply_filters(resume, jd)
 
                 # Similarity
-               
                 try:
-                    similarity = compute_similarity(cleaned_jd_text, cleaned_resume_text)
-                except Exception as e:
-                    logger.error("Similarity failed for resume_id=%s", resume.id)
+                    similarity = compute_similarity(cleaned_jd, cleaned_resume)
+                except Exception:
                     similarity = 0.0
                     reasons.append("Similarity computation failed")
 
-                # Score Calculation
-                
+                # Score
                 score = calculate_final_score(similarity, resume.cgpa or 0)
 
-                # Robustness Check
-                
+                # Missing skills
+                matched_skills = matched_skills or []
+                missing_skills = list(set(jd_skills) - set(matched_skills))
+
+                # Better reasons
+                improved_reasons = []
+
                 if similarity <= 0.5:
-                    reasons.append("Low semantic similarity with job description")
+                    improved_reasons.append("Low semantic similarity with job description")
 
-                eligible = len(reasons) == 0
+                if missing_skills:
+                    improved_reasons.append(
+                        f"Missing key skills: {', '.join(missing_skills[:5])}"
+                    )
 
-                
-                # Save to DB
-                
-                resume.matched_skills = ",".join(matched_skills) if matched_skills else ""
+                if matched_skills:
+                    improved_reasons.append(
+                        f"Matched skills: {', '.join(matched_skills[:5])}"
+                    )
+
+                if resume.cgpa and jd.min_cgpa and resume.cgpa < jd.min_cgpa:
+                    improved_reasons.append(
+                        f"CGPA below requirement ({resume.cgpa} < {jd.min_cgpa})"
+                    )
+
+                # Final eligibility
+                eligible = len(improved_reasons) == 0
+
+                # Store JSON correctly
+                resume.matched_skills = json.dumps(matched_skills)
+
                 resume.score = score
                 resume.eligible = eligible
 
-                
-                # Output (Improved)
-            
                 results.append({
-                    "name": Path(resume.file_path).name if resume.file_path else f"Resume {resume.id}",
+                    "name": Path(resume.file_path).name,
                     "status": "Eligible" if eligible else "Rejected",
-                    "score": round(score, 3),
+                    "score": round(score, 2),
+                    "matched_skills": matched_skills,
+                    "missing_skills": missing_skills[:5],
                     "explanation": explain_score(similarity),
-                    "reasons": reasons if reasons else ["Eligible"],
+                    "reasons": improved_reasons if improved_reasons else ["Strong match"]
                 })
 
             except Exception as e:
-                logger.exception("Error processing resume_id=%s", resume.id)
+                logger.exception("Error processing resume")
+
                 results.append({
                     "name": f"Resume {resume.id}",
                     "status": "Error",
                     "score": 0,
                     "explanation": "Processing failed",
-                    "reasons": [str(e)],
+                    "reasons": [str(e)]
                 })
 
         db.commit()
 
-        # Sorted Output
-       
+        # Better sorting
         return sorted(results, key=lambda x: x["score"], reverse=True)
 
-    finally:
-        db.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

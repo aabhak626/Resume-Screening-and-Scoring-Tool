@@ -7,38 +7,23 @@ from app.services.skill_extractor import extract_skills
 logger = logging.getLogger(__name__)
 
 
-def apply_filters(resume, jd) -> Tuple[float, List[str], List[str]]:
-    logger.info("Applying filters for resume_id=%s", getattr(resume, "id", "unknown"))
+def apply_filters(resume, jd):
+    reasons = []
 
-    resume_text = (getattr(resume, "extracted_text", "") or "").lower()
-    jd_text = (
-        getattr(jd, "required_skills", None)
-        or getattr(jd, "jd_skills", None)
-        or getattr(jd, "text", "")
-        or ""
-    ).lower()
+    resume_text = resume.extracted_text or ""
+    jd_text = jd.text or ""
 
-    resume_skills = extract_skills(resume_text)
-    jd_skills = extract_skills(jd_text)
-    matched_skills, missing_skills = check_skills(resume_skills, jd_skills)
+    # Extract skills properly
+    resume_skills = set(extract_skills(resume_text))
+    jd_skills = set(extract_skills(jd_text))
 
-    reasons: List[str] = []
-    if not check_cgpa(getattr(resume, "cgpa", None), getattr(jd, "min_cgpa", None)):
-        if getattr(resume, "cgpa", None) is None:
-            reasons.append("CGPA missing")
-        else:
-            reasons.append("CGPA below requirement")
+    # CORRECT MATCHING (intersection)
+    matched_skills = list(resume_skills.intersection(jd_skills))
 
-    if jd_skills and not resume_skills:
-        reasons.append("No skills found in resume")
-    elif missing_skills:
-        reasons.append("Missing required skills: " + ", ".join(missing_skills))
+    # CGPA check 
+    eligible = True
+    if resume.cgpa and jd.min_cgpa and resume.cgpa < jd.min_cgpa:
+        reasons.append("CGPA below requirement")
+        eligible = False
 
-    skill_score = len(matched_skills) / len(jd_skills) if jd_skills else 0.0
-    logger.info(
-        "Filter results for resume_id=%s skill_score=%.3f reasons=%s",
-        getattr(resume, "id", "unknown"),
-        skill_score,
-        reasons,
-    )
-    return skill_score, matched_skills, reasons
+    return eligible, matched_skills, reasons

@@ -2,50 +2,71 @@ import logging
 import re
 from typing import List
 
-COMMON_WORDS = [
-    "experience", "knowledge", "ability", "understanding",
-    "good", "strong", "working", "familiar"
-]
+logger = logging.getLogger(__name__)
 
+# STRONG SKILL DATABASE (VERY IMPORTANT)
+SKILL_DB = {
+    # Programming
+    "python", "java", "c", "c++", "javascript",
+
+    # Core CS
+    "data structures", "algorithms", "complexity analysis",
+
+    # Systems
+    "distributed systems", "system design", "scalability",
+    "performance", "reliability",
+
+    # Networking
+    "networking", "ip networking", "tcpdump",
+
+    # OS / infra
+    "unix", "linux",
+
+    # Data / ML
+    "machine learning", "deep learning", "data analysis",
+    "pandas", "numpy",
+
+    # Web / backend
+    "django", "flask", "fastapi",
+
+    # Cloud
+    "cloud computing", "aws", "gcp",
+
+    # Tools
+    "git", "github"
+}
+
+# Normalization
 SKILL_NORMALIZATION = {
     "ml": "machine learning",
-    "ai": "artificial intelligence",
+    "ai": "machine learning",
     "dl": "deep learning",
 }
 
-logger = logging.getLogger(__name__)
-
-
-def extract_dynamic_skills(text: str) -> List[str]:
-    try:
-        if not text:
-            logger.warning("Skill extraction skipped because input text is empty.")
-            return []
-
-        lines = text.lower().split("\n")
-        skills: List[str] = []
-        seen = set()
-
-        for line in lines:
-            if len(line) >= 100:
-                continue
-
-            words = re.findall(r"\b[a-zA-Z]+\b", line)
-
-            for word in words:
-                normalized_word = SKILL_NORMALIZATION.get(word.strip(), word.strip())
-                if normalized_word in COMMON_WORDS or len(normalized_word) <= 2:
-                    continue
-                if normalized_word not in seen:
-                    seen.add(normalized_word)
-                    skills.append(normalized_word)
-
-        logger.info("Extracted %s unique skills.", len(skills))
-        return skills
-    except Exception:
-        logger.exception("Failed to extract skills from text.")
-        return []
-
 
 def extract_skills(text: str) -> List[str]:
-    return extract_dynamic_skills(text)
+    try:
+        if not text:
+            return []
+
+        text = text.lower()
+        found_skills = set()
+
+        # 1. Phrase matching (MOST IMPORTANT)
+        for skill in SKILL_DB:
+            if skill in text:
+                found_skills.add(skill)
+
+        # 2. Word matching fallback
+        words = re.findall(r"\b[a-zA-Z]+\b", text)
+
+        for word in words:
+            word = SKILL_NORMALIZATION.get(word, word)
+            if word in SKILL_DB:
+                found_skills.add(word)
+
+        return list(found_skills)
+
+    except Exception:
+        logger.exception("Skill extraction failed")
+        return []

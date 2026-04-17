@@ -10,3 +10,5 @@ torch
 transformers
 spacy
 pydantic
+passlib[bcrypt]
+python-jose[cryptography]
