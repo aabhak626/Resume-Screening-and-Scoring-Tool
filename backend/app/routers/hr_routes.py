@@ -6,9 +6,16 @@ from app.routers.auth_routes import require_admin
 
 from app.services.jd_parser import extract_min_cgpa
 from app.services.embedding import clean_text, compute_similarity
-from app.services.filter_engine import apply_filters
-from app.services.similarity import calculate_final_score, explain_score
+from app.services.similarity import explain_score
 from app.services.text_extractor import extract_text_from_file
+
+# NEW IMPORTS
+from app.services.skill_extractor import (
+    extract_skills,
+    detect_role,
+    get_skill_weight
+)
+from app.services.filter_engine import get_matched_and_missing_skills
 
 import logging
 import os
@@ -17,7 +24,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# MUST BE BEFORE ROUTES
 router = APIRouter(prefix="/hr", tags=["HR"])
 
 UPLOAD_FOLDER = "uploads"
@@ -80,7 +86,7 @@ async def upload_jd(
         logger.exception("Error uploading JD")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Get All JDs
+# List JDs
 
 @router.get("/jds")
 def list_jds(
@@ -101,7 +107,7 @@ def list_jds(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Screening 
+# SCREENING (FINAL VERSION)
 
 @router.get("/screen/{jd_id}")
 def screen(
@@ -110,8 +116,6 @@ def screen(
     db: Session = Depends(get_db)
 ):
     try:
-        from app.services.skill_extractor import extract_skills
-
         jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
         resumes = db.query(Resume).all()
 
@@ -123,88 +127,85 @@ def screen(
 
         results = []
 
-        # Extract JD skills once
         jd_text = jd.text or ""
-        jd_skills = extract_skills(jd_text)
+
+        # Detect role
+        role = detect_role(jd_text)
+
+        # Extract JD skills
+        jd_skills = extract_skills(jd_text, role)
 
         for resume in resumes:
             try:
                 resume_text = resume.extracted_text or ""
 
+                # Clean text
                 cleaned_jd = clean_text(jd_text)
                 cleaned_resume = clean_text(resume_text)
-
-                # Apply filters
-                _, matched_skills, reasons = apply_filters(resume, jd)
 
                 # Similarity
                 try:
                     similarity = compute_similarity(cleaned_jd, cleaned_resume)
                 except Exception:
                     similarity = 0.0
-                    reasons.append("Similarity computation failed")
 
-                # Score
-                score = calculate_final_score(similarity, resume.cgpa or 0)
+                # Extract resume skills
+                resume_skills = extract_skills(resume_text, role)
 
-                # Missing skills
-                matched_skills = matched_skills or []
-                missing_skills = list(set(jd_skills) - set(matched_skills))
+                # Correct matching
+                matched_skills, missing_skills = get_matched_and_missing_skills(
+                    resume_skills,
+                    jd_skills
+                )
 
-                # Better reasons
-                improved_reasons = []
+                # Weighted skill score
+                total_weight = sum(get_skill_weight(s, role) for s in jd_skills)
+                matched_weight = sum(get_skill_weight(s, role) for s in matched_skills)
 
-                if similarity <= 0.5:
-                    improved_reasons.append("Low semantic similarity with job description")
+                skill_score = matched_weight / total_weight if total_weight > 0 else 0
+
+                # Final score (hybrid)
+                final_score = (0.6 * similarity) + (0.4 * skill_score)
+
+                # Reasons
+                reasons = []
+
+                if similarity < 0.5:
+                    reasons.append("Low semantic similarity")
 
                 if missing_skills:
-                    improved_reasons.append(
-                        f"Missing key skills: {', '.join(missing_skills[:5])}"
-                    )
+                    reasons.append(f"Missing skills: {', '.join(missing_skills[:3])}")
 
                 if matched_skills:
-                    improved_reasons.append(
-                        f"Matched skills: {', '.join(matched_skills[:5])}"
-                    )
+                    reasons.append(f"Matched skills: {', '.join(matched_skills[:3])}")
 
-                if resume.cgpa and jd.min_cgpa and resume.cgpa < jd.min_cgpa:
-                    improved_reasons.append(
-                        f"CGPA below requirement ({resume.cgpa} < {jd.min_cgpa})"
-                    )
-
-                # Final eligibility
-                eligible = len(improved_reasons) == 0
-
-                # Store JSON correctly
+                # Store JSON safely
                 resume.matched_skills = json.dumps(matched_skills)
-
-                resume.score = score
-                resume.eligible = eligible
+                resume.score = final_score
+                resume.eligible = len(reasons) == 0
 
                 results.append({
                     "name": Path(resume.file_path).name,
-                    "status": "Eligible" if eligible else "Rejected",
-                    "score": round(score, 2),
-                    "matched_skills": matched_skills,
+                    "role": role,
+                    "status": "Eligible" if len(reasons) == 0 else "Rejected",
+                    "score": round(final_score, 2),
+                    "matched_skills": matched_skills[:5],
                     "missing_skills": missing_skills[:5],
                     "explanation": explain_score(similarity),
-                    "reasons": improved_reasons if improved_reasons else ["Strong match"]
+                    "reasons": reasons if reasons else ["Strong match"]
                 })
 
             except Exception as e:
                 logger.exception("Error processing resume")
-
                 results.append({
                     "name": f"Resume {resume.id}",
                     "status": "Error",
                     "score": 0,
-                    "explanation": "Processing failed",
                     "reasons": [str(e)]
                 })
 
         db.commit()
 
-        # Better sorting
         return sorted(results, key=lambda x: x["score"], reverse=True)
 
     except Exception as e:
