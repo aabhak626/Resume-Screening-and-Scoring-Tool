@@ -1,6 +1,6 @@
 # Resume Screening System
 
-A FastAPI-based Resume Screening System with JWT authentication, role-based access, multi-job-description screening, and a lightweight browser frontend.
+A FastAPI-based Resume Screening System with JWT authentication, role-based access, multi-job-description screening
 
 ## Features
 
@@ -125,17 +125,6 @@ Main steps:
   - admin only
   - screens all resumes against the selected JD
 
-## Frontend Overview
-
-The frontend is a simple browser-based app inside the existing `frontend/` folder.
-
-Main flow:
-
-1. Open `frontend/index.html`
-2. Login using email and password
-3. Token is stored in `localStorage`
-4. UI changes based on role
-
 ### User View
 
 - Upload Resume
@@ -148,37 +137,6 @@ Main flow:
 - Run screening
 - View results table
 
-## Frontend Files
-
-- `frontend/index.html`
-  - app entry page
-
-- `frontend/app.js`
-  - bootstraps the frontend
-
-- `frontend/src/App.js`
-  - chooses login or dashboard view
-
-- `frontend/src/pages/Login.js`
-  - handles login form
-
-- `frontend/src/pages/Dashboard.js`
-  - renders role-based dashboard
-
-- `frontend/src/components/UploadResume.js`
-  - resume upload UI
-
-- `frontend/src/components/UploadJD.js`
-  - JD upload UI
-
-- `frontend/src/components/JDSelector.js`
-  - fetches all JDs and shows dropdown
-
-- `frontend/src/components/ResultsTable.js`
-  - fetches and renders screening results
-
-- `frontend/src/services/api.js`
-  - stores token, builds auth headers, and makes API calls
 
 ## Installation
 
@@ -238,27 +196,6 @@ Swagger docs:
 http://127.0.0.1:8000/docs
 ```
 
-## Running the Frontend
-
-The frontend is plain HTML, CSS, and JavaScript modules.
-
-Simplest option:
-
-1. Open [frontend/index.html](/c:/Users/aabha/OneDrive/Desktop/Resume%20Screening/frontend/index.html:1) in a browser
-
-Better option using a local static server:
-
-```powershell
-cd frontend
-python -m http.server 5500
-```
-
-Then open:
-
-```text
-http://127.0.0.1:5500
-```
-
 ## Usage Flow
 
 ### Normal user
@@ -286,12 +223,9 @@ http://127.0.0.1:5500
 
 - Signup creates only normal users by default
 - Admin users must currently be created or updated manually in the database
-- Frontend is intentionally simple and focused on working flow, not advanced styling
 - Database migrations are not set up yet; tables are created using `Base.metadata.create_all()`
 
-## Documentation
 
-- Detailed internal explanation: [PROJECT_KNOWLEDGE.md](/c:/Users/aabha/OneDrive/Desktop/Resume%20Screening/PROJECT_KNOWLEDGE.md:1)
 
 ## Tech Stack
 
