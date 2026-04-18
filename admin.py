@@ -1,21 +1,37 @@
 from app.database import SessionLocal
 from app.models import User
-from app.routers.auth_routes import hash_password  
+from app.routers.auth_routes import hash_password
 
+import os
+
+# Create DB session
 db = SessionLocal()
 
-existing = db.query(User).filter(User.email == "admin@gmail.com").first()
+# Use environment variables (with defaults for easy testing)
+email = os.getenv("ADMIN_EMAIL", "admin@gmail.com")
+password = os.getenv("ADMIN_PASSWORD", "admin123")
 
-if not existing:
-    admin = User(
-        email="admin@gmail.com",
-        password=hash_password("admin123"),
-        role="admin"
-    )
+try:
+    # Check if admin already exists
+    existing = db.query(User).filter(User.email == email).first()
 
-    db.add(admin)
-    db.commit()
+    if existing:
+        print("Admin already exists")
+    else:
+        # Create admin user
+        admin = User(
+            email=email,
+            password=hash_password(password),
+            role="admin"
+        )
 
-    print("Admin created successfully")
-else:
-    print("Admin already exists")
+        db.add(admin)
+        db.commit()
+
+        print("Admin created successfully")
+
+except Exception as e:
+    print("Error creating admin:", str(e))
+
+finally:
+    db.close()
