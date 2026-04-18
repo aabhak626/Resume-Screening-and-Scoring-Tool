@@ -45,7 +45,7 @@ def get_db():
 @router.post("/upload-jd")
 async def upload_jd(
     file: UploadFile = File(...),
-    current_user = Depends(require_admin),
+    current_user=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     try:
